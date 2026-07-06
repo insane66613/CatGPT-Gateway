@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 import importlib.util
+import inspect
 from pathlib import Path
 
 
@@ -44,6 +45,13 @@ from src.chatgpt.detector import (
 )
 
 
+async def _new_playwright_context():
+    context = async_playwright()
+    if inspect.isawaitable(context):
+        context = await context
+    return context
+
+
 class DetectorHelperTests(unittest.TestCase):
     def test_normalize_assistant_text_removes_heading(self) -> None:
         self.assertEqual(
@@ -61,7 +69,7 @@ class DetectorHelperTests(unittest.TestCase):
 
 class DetectorCopyButtonTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        playwright_context = async_playwright()
+        playwright_context = await _new_playwright_context()
         if playwright_context is None:
             self.skipTest("patchright is not installed")
 

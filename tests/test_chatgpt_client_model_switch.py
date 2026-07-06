@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 import importlib.util
+import inspect
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,6 +45,15 @@ try:
     from patchright.async_api import async_playwright
 except ImportError:
     async_playwright = None
+
+
+async def _new_playwright_context():
+    if async_playwright is None:
+        return None
+    context = async_playwright()
+    if inspect.isawaitable(context):
+        context = await context
+    return context
 
 
 async def _noop_sleep(*_args, **_kwargs) -> None:
@@ -232,7 +242,9 @@ class ChatGPTClientModelSwitchTests(unittest.IsolatedAsyncioTestCase):
         if async_playwright is None:
             self.skipTest("patchright is not installed")
 
-        playwright_context = async_playwright()
+        playwright_context = await _new_playwright_context()
+        if playwright_context is None:
+            self.skipTest("patchright is not installed")
         playwright = await playwright_context.__aenter__()
         try:
             try:
@@ -291,7 +303,9 @@ class ChatGPTClientModelSwitchTests(unittest.IsolatedAsyncioTestCase):
         if async_playwright is None:
             self.skipTest("patchright is not installed")
 
-        playwright_context = async_playwright()
+        playwright_context = await _new_playwright_context()
+        if playwright_context is None:
+            self.skipTest("patchright is not installed")
         playwright = await playwright_context.__aenter__()
         try:
             try:
@@ -362,7 +376,9 @@ class ChatGPTClientModelSwitchTests(unittest.IsolatedAsyncioTestCase):
         if async_playwright is None:
             self.skipTest("patchright is not installed")
 
-        playwright_context = async_playwright()
+        playwright_context = await _new_playwright_context()
+        if playwright_context is None:
+            self.skipTest("patchright is not installed")
         chrome_path = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
         launch_options = {"headless": True}
         if chrome_path.exists():
