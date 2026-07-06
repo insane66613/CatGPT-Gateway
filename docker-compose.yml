@@ -15,8 +15,8 @@ services:
     networks:
       - app_services
     ports:
-      - "8650:8000" # API Port
-      - "6080:6080" # noVNC web UI
+      - "127.0.0.1:8650:8000" # API Port
+      - "127.0.0.1:6080:6080" # noVNC web UI
     command: ["/entrypoint.sh"]
     tmpfs:
       - /tmp:exec,mode=1777
@@ -43,8 +43,8 @@ services:
       # API
       API_HOST: "0.0.0.0"
       API_PORT: 8000
-      API_TOKEN: ${CATGPT_API_KEY}
-      API_TOKEN_OPTIONAL: "true"
+      API_TOKEN: ${CATGPT_API_KEY:?Set CATGPT_API_KEY to a strong bearer token}
+      API_TOKEN_OPTIONAL: "false"
       # Optional: keep large system instructions in thread context and send compact reminders
       API_THREAD_CONTRACT_MODE: "true"
       API_THREAD_CONTRACT_TTL_SECONDS: 3600
@@ -55,10 +55,10 @@ services:
       API_HEADER_ROW_MERGE_MODE: "true"
       API_APP_THREAD_DELETE_EXPIRED: "true"
       # VNC Authentication
-      VNC_PASSWORD: ${CATGPT_VNC_PASSWORD}
+      VNC_PASSWORD: ${CATGPT_VNC_PASSWORD:?Set CATGPT_VNC_PASSWORD to a non-default VNC password}
       # Logging (verbose for Docker)
-      LOG_LEVEL: "DEBUG"
-      VERBOSE: "true"
+      LOG_LEVEL: "INFO"
+      VERBOSE: "false"
     volumes:
       - ${DOCKERDIR}/appdata/catgpt/browser:/app/browser_data
       - ${DOCKERDIR}/appdata/catgpt/logs:/app/logs

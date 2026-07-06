@@ -105,6 +105,17 @@ class BearerTokenMiddlewareTests(unittest.TestCase):
         events = asyncio.run(_call_middleware("/cline/v1/chat/completions"))
         self.assertEqual(events[0]["status"], 204)
 
+    def test_cors_origin_allowlist_parser_trims_empty_values(self) -> None:
+        original = Config.API_CORS_ORIGINS
+        try:
+            Config.API_CORS_ORIGINS = " https://one.example, ,https://two.example "
+            self.assertEqual(
+                Config.api_cors_origins(),
+                ["https://one.example", "https://two.example"],
+            )
+        finally:
+            Config.API_CORS_ORIGINS = original
+
 
 if __name__ == "__main__":
     unittest.main()

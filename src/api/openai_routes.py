@@ -15,10 +15,14 @@ import asyncio
 import copy
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import json
+import mimetypes
 import re
+import socket
 import time
 import uuid
+import urllib.request
 from urllib.parse import urlparse
 from typing import Any
 
@@ -635,6 +639,132 @@ def _extract_image_urls(content) -> list[str]:
     return urls
 
 
+
+def _is_public_network_address(hostname: str) -> bool:
+    """Return True when a hostname resolves only to public routable addresses."""
+    if not hostname:
+        return False
+    if hostname.lower() in {"localhost", "localhost.localdomain"}:
+        return False
+    try:
+        addresses = [ipaddress.ip_address(hostname)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        except OSError:
+            return False
+        addresses = []
+        seen: set[str] = set()
+        for info in infos:
+            raw_addr = info[4][0]
+            if raw_addr and raw_addr not in seen:
+                seen.add(raw_addr)
+                try:
+                    addresses.append(ipaddress.ip_address(raw_addr))
+                except ValueError:
+                    return False
+    if not addresses:
+        return False
+    return all(
+        not (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_reserved
+            or addr.is_unspecified
+        )
+        for addr in addresses
+    )
+
+
+def _validate_remote_attachment_url(url: str) -> tuple[bool, str]:
+    """Validate remote attachment URLs before the server fetches them."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return False, "remote attachments must use http or https"
+    if scheme == "http" and not Config.REMOTE_ATTACHMENT_ALLOW_HTTP:
+        return False, "plain-http remote attachments are disabled"
+    if parsed.username or parsed.password:
+        return False, "remote attachment URLs must not contain credentials"
+    if not parsed.hostname:
+        return False, "remote attachment URL is missing a host"
+    if not Config.REMOTE_ATTACHMENT_ALLOW_PRIVATE_NETS and not _is_public_network_address(parsed.hostname):
+        return False, "remote attachment host resolves to a private or non-routable address"
+    return True, ""
+
+
+def _extension_from_remote_response(url: str, content_type: str | None) -> str:
+    """Infer a safe file extension from Content-Type first, then URL path."""
+    if content_type:
+        mime = content_type.split(";", 1)[0].strip().lower()
+        ext = mimetypes.guess_extension(mime)
+        if ext:
+            return ext.lstrip(".")
+    suffix = urlparse(url).path.rsplit("/", 1)[-1].rsplit(".", 1)
+    if len(suffix) == 2 and re.fullmatch(r"[A-Za-z0-9]{1,8}", suffix[1]):
+        return suffix[1].lower()
+    return "bin"
+
+
+def _make_no_redirect_opener() -> urllib.request.OpenerDirector:
+    """Build a urllib opener that fails closed on HTTP redirects."""
+    opener = urllib.request.OpenerDirector()
+    for handler_cls in (
+        urllib.request.UnknownHandler,
+        urllib.request.HTTPHandler,
+        urllib.request.HTTPSHandler,
+        urllib.request.HTTPDefaultErrorHandler,
+        urllib.request.HTTPErrorProcessor,
+    ):
+        opener.add_handler(handler_cls())
+    return opener
+
+
+_NO_REDIRECT_OPENER = _make_no_redirect_opener()
+
+
+def _download_remote_attachment(url: str, filepath_base: str) -> str | None:
+    """Download a remote attachment with SSRF, timeout, and size guards."""
+    ok, reason = _validate_remote_attachment_url(url)
+    if not ok:
+        log.warning(f"Rejected remote attachment URL: {reason}")
+        return None
+    request = urllib.request.Request(url, headers={"User-Agent": "CatGPT-Gateway/1.0"})
+    max_bytes = max(1, Config.REMOTE_ATTACHMENT_MAX_BYTES)
+    timeout = max(1, Config.REMOTE_ATTACHMENT_TIMEOUT_SECONDS)
+    try:
+        with _NO_REDIRECT_OPENER.open(request, timeout=timeout) as response:
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > max_bytes:
+                log.warning(f"Rejected remote attachment larger than limit: {content_length} bytes")
+                return None
+            ext = _extension_from_remote_response(url, response.headers.get("Content-Type"))
+            filepath = f"{filepath_base}.{ext}"
+            total = 0
+            with open(filepath, "wb") as f:
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        f.close()
+                        try:
+                            import os
+                            os.remove(filepath)
+                        except OSError:
+                            pass
+                        log.warning(f"Rejected remote attachment exceeding {max_bytes} bytes")
+                        return None
+                    f.write(chunk)
+            log.info(f"Downloaded file: {filepath}")
+            return filepath
+    except Exception as e:
+        log.error(f"Failed to download file from {url}: {e}")
+        return None
+
 def _extract_file_attachments(content) -> list[dict]:
     """
     Extract file attachments from message content.
@@ -735,22 +865,9 @@ async def _download_file(url_or_data: str | dict, download_dir: str = "/tmp/catg
             log.error(f"Failed to decode base64 data URL: {e}")
             return None
     elif url.startswith(("http://", "https://")):
-        # HTTP URL - download it
-        try:
-            import urllib.request
-            ext = "bin"
-            for e in ["jpg", "jpeg", "webp", "gif", "png", "tif", "tiff", "pdf", "txt", "csv", "docx", "xlsx"]:
-                if e in url.lower():
-                    ext = e
-                    break
-            filename = f"file_{hashlib.md5(url.encode()).hexdigest()[:12]}.{ext}"
-            filepath = os.path.join(download_dir, filename)
-            urllib.request.urlretrieve(url, filepath)
-            log.info(f"Downloaded file: {filepath}")
-            return filepath
-        except Exception as e:
-            log.error(f"Failed to download file from {url}: {e}")
-            return None
+        filename_base = f"file_{hashlib.md5(url.encode()).hexdigest()[:12]}"
+        filepath_base = os.path.join(download_dir, filename_base)
+        return _download_remote_attachment(url, filepath_base)
     elif os.path.isfile(url):
         # Local file path
         return url

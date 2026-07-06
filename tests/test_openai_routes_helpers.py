@@ -4,6 +4,7 @@ import asyncio
 import sys
 import types
 import unittest
+import urllib.request
 
 from starlette.requests import Request
 from fastapi import HTTPException
@@ -63,6 +64,8 @@ from src.api.openai_routes import (
     _responses_request_to_chat_request,
     _responses_response_from_chat,
     _validate_responses_request,
+    _extension_from_remote_response,
+    _validate_remote_attachment_url,
 )
 from src.api.browser_gate import browser_access_lock
 from src.api import routes as native_routes
@@ -197,6 +200,37 @@ class OpenAIRoutesHelpersTests(unittest.TestCase):
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["food"], "chapattis")
         self.assertEqual(merged[0]["note"], "TO SERVE")
+
+    def test_remote_attachment_opener_does_not_follow_redirects(self) -> None:
+        handler_names = {type(handler).__name__ for handler in openai_routes_module._NO_REDIRECT_OPENER.handlers}
+        self.assertNotIn("HTTPRedirectHandler", handler_names)
+
+    def test_remote_attachment_rejects_localhost(self) -> None:
+        original_allow_http = openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_HTTP
+        original_allow_private = openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_PRIVATE_NETS
+        try:
+            openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_HTTP = True
+            openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_PRIVATE_NETS = False
+            ok, reason = _validate_remote_attachment_url("http://127.0.0.1:8000/admin")
+            self.assertFalse(ok)
+            self.assertIn("private", reason)
+        finally:
+            openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_HTTP = original_allow_http
+            openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_PRIVATE_NETS = original_allow_private
+
+    def test_remote_attachment_rejects_http_by_default(self) -> None:
+        original_allow_http = openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_HTTP
+        try:
+            openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_HTTP = False
+            ok, reason = _validate_remote_attachment_url("http://example.com/file.png")
+            self.assertFalse(ok)
+            self.assertIn("plain-http", reason)
+        finally:
+            openai_routes_module.Config.REMOTE_ATTACHMENT_ALLOW_HTTP = original_allow_http
+
+    def test_remote_attachment_extension_prefers_content_type(self) -> None:
+        ext = _extension_from_remote_response("https://example.com/download?id=1", "application/pdf; charset=binary")
+        self.assertEqual(ext, "pdf")
 
     def test_instruction_prefix_heuristic_detects_prompt_markers(self) -> None:
         text = (

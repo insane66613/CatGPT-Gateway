@@ -23,7 +23,10 @@ echo "[entrypoint] Stale locks cleaned"
 
 # ── 2.5. Set up VNC password ───────────────────────────────────
 mkdir -p /app/.vnc
-VNC_PASSWORD="${VNC_PASSWORD:-catgpt}"
+if [ -z "${VNC_PASSWORD:-}" ] || [ "${VNC_PASSWORD}" = "catgpt" ]; then
+  echo "[entrypoint] ERROR: Set VNC_PASSWORD to a non-default value before exposing noVNC." >&2
+  exit 1
+fi
 x11vnc -storepasswd "$VNC_PASSWORD" /app/.vnc/passwd 2>/dev/null
 echo "[entrypoint] VNC password set (user: admin, password: <VNC_PASSWORD env var>)"
 

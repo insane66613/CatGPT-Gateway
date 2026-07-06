@@ -84,8 +84,8 @@ ENV BROWSER_DATA_DIR=/app/browser_data
 ENV LOG_DIR=/app/logs
 ENV API_HOST=0.0.0.0
 ENV API_PORT=8000
-ENV LOG_LEVEL=DEBUG
-ENV VERBOSE=true
+ENV LOG_LEVEL=INFO
+ENV VERBOSE=false
 
 # ── Ports ───────────────────────────────────────────────────────
 # 8000: FastAPI server
@@ -94,6 +94,6 @@ EXPOSE 8000 6080
 
 # ── Health check ────────────────────────────────────────────────
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/v1/models || exit 1
+    CMD curl -f http://localhost:8000/healthz || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

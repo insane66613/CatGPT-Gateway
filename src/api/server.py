@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 from contextlib import asynccontextmanager
 
@@ -67,6 +68,12 @@ _client: ChatGPTClient | ClaudeClient | None = None
 async def lifespan(app: FastAPI):
     """Startup: launch browser. Shutdown: close it."""
     global _browser, _client
+
+    if not Config.API_TOKEN and Config.API_HOST in {"0.0.0.0", "::"} and not Config.API_ALLOW_UNAUTHENTICATED:
+        raise RuntimeError(
+            "Refusing to start unauthenticated API on a public bind host. "
+            "Set API_TOKEN or set API_ALLOW_UNAUTHENTICATED=true explicitly for local/dev use."
+        )
 
     log.info("Starting browser for API server...")
     _browser = BrowserManager()
@@ -289,7 +296,7 @@ class BearerTokenMiddleware:
             provided = ""
 
         expected = token.strip()
-        if provided != expected:
+        if not hmac.compare_digest(provided, expected):
             client = scope.get("client")
             client_host = client[0] if isinstance(client, tuple) and client else "unknown"
             log.warning(f"Auth failed from {client_host}: invalid token")
@@ -310,10 +317,16 @@ class BearerTokenMiddleware:
 
 app.add_middleware(BearerTokenMiddleware)
 
+cors_origins = Config.api_cors_origins()
+cors_allow_credentials = Config.API_CORS_ALLOW_CREDENTIALS
+if "*" in cors_origins and cors_allow_credentials:
+    log.warning("API_CORS_ALLOW_CREDENTIALS=true is incompatible with API_CORS_ORIGINS='*'; disabling credentials for CORS")
+    cors_allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
