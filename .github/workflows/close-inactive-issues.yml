@@ -18,7 +18,7 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const assignee = "TheBadFella";
+            const assignee = context.repo.owner;
             const staleLabel = "Stale";
             const ignoredLabels = new Set(["pinned", "keep-open"]);
             const inactivityDays = 3;
