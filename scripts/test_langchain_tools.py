@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LangChain test script for the OpenAI-compatible CatGPT API.
+LangChain test script for the OpenAI-compatible MimicGate API.
 
 Tests:
   1. Simple chat (no tools)
@@ -10,7 +10,7 @@ Tests:
   5. Image input (single image + text, multiple images)
 
 Prerequisites:
-  - CatGPT API server running: python -m src.api.server
+  - MimicGate API server running: python -m src.api.server
   - pip install langchain langchain-openai openai
 
 Usage:
@@ -20,22 +20,35 @@ Usage:
 from __future__ import annotations
 
 import base64
-import json
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
+# Load .env if dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 
 # ── Configuration ───────────────────────────────────────────────
 
 BASE_URL = "http://localhost:8000/v1"
-MODEL = "catgpt-browser"
-API_KEY = "dummy123"  # CatGPT doesn't require auth
+# Auto-detect model from provider env var
+_provider = os.environ.get("PROVIDER", "chatgpt")
+if _provider == "minimax":
+    MODEL = os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7")
+elif _provider == "claude":
+    MODEL = "claude-browser"
+else:
+    MODEL = "mimicgate-browser"
+API_KEY = "dummy123"  # MimicGate doesn't require auth
 
 # Image test assets
 IMAGE_DIR = Path(__file__).resolve().parent.parent / "downloads" / "images"
@@ -149,7 +162,7 @@ def test_simple_chat():
     )
 
     response = llm.invoke([HumanMessage(content="Who is the president of the United States?")])
-    print(f"Question: Who is the president of the United States?")
+    print("Question: Who is the president of the United States?")
     print(f"Response: {response.content}")
     print(f"Type: {type(response).__name__}")
     print("✓ Simple chat works\n")
@@ -179,7 +192,7 @@ def test_tool_calling():
     print(f"Tool calls: {response.tool_calls}")
 
     if response.tool_calls:
-        print(f"\n✓ Model requested tool call(s):")
+        print("\n✓ Model requested tool call(s):")
         for tc in response.tool_calls:
             print(f"  - {tc['name']}({tc['args']})")
 
@@ -236,7 +249,7 @@ def test_add_numbers_tool():
     print(f"Tool calls: {response.tool_calls}")
 
     if response.tool_calls:
-        print(f"\n✓ Model requested tool call(s):")
+        print("\n✓ Model requested tool call(s):")
         for tc in response.tool_calls:
             print(f"  - {tc['name']}({tc['args']})")
 
@@ -516,7 +529,7 @@ def test_file_attachment():
 
 def main():
     print("=" * 60)
-    print("  CatGPT — LangChain OpenAI-Compatible API Tests")
+    print("  MimicGate — LangChain OpenAI-Compatible API Tests")
     print("=" * 60)
     print(f"\nBase URL: {BASE_URL}")
     print(f"Model:    {MODEL}")

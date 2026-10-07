@@ -68,9 +68,23 @@ class ChatMessage(BaseModel):
 # ── Request ─────────────────────────────────────────────────────
 
 
+class PageExtractionOptions(BaseModel):
+    """MimicGate extension for structured page-by-page document extraction."""
+    mode: str = "structured"
+
+
+class ReasoningOptions(BaseModel):
+    """Reasoning options accepted by Chat Completions and Responses."""
+
+    effort: Optional[str] = None
+    mode: Optional[str] = None
+    summary: Optional[str] = None
+    context: Optional[str] = None
+
+
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request body."""
-    model: str = "catgpt-browser"
+    model: str = "mimicgate-browser"
     messages: list[ChatMessage]
     tools: Optional[list[ToolDefinition]] = None
     tool_choice: Optional[Union[str, dict]] = None  # "auto" | "none" | {"type":"function","function":{"name":"..."}}
@@ -83,6 +97,16 @@ class ChatCompletionRequest(BaseModel):
     stream: Optional[bool] = False
     n: Optional[int] = 1
     user: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    reasoning: Optional[ReasoningOptions] = None
+    # Durable logical conversation identity (also accepted via header).
+    conversation_id: Optional[str] = None
+    # MimicGate extension: explicit thread targeting for app-level isolation.
+    thread_id: Optional[str] = None
+    response_format: Optional[Any] = None
+    # MimicGate extension: force structured page-by-page extraction for attachments.
+    page_extraction: Optional[PageExtractionOptions] = None
+    read_aloud: Optional[bool] = False
 
 
 # ── Response ────────────────────────────────────────────────────
@@ -100,6 +124,15 @@ class ChoiceMessage(BaseModel):
     role: str = "assistant"
     content: Optional[str] = None
     tool_calls: Optional[list[ToolCall]] = None
+    audio: Optional["AudioInfo"] = None
+
+
+class AudioInfo(BaseModel):
+    """Metadata for browser-generated read-aloud audio."""
+    url: str = ""
+    local_path: str = ""
+    mime_type: str = ""
+    size_bytes: int = 0
 
 
 class Choice(BaseModel):
@@ -114,9 +147,25 @@ class ChatCompletionResponse(BaseModel):
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:24]}")
     object: str = "chat.completion"
     created: int = Field(default_factory=lambda: int(time.time()))
-    model: str = "catgpt-browser"
+    model: str = "mimicgate-browser"
     choices: list[Choice]
     usage: UsageInfo = Field(default_factory=UsageInfo)
+
+
+class ChatCompletionAsyncRequest(ChatCompletionRequest):
+    """Async chat request; same payload as chat completion."""
+
+
+class ChatCompletionJobResponse(BaseModel):
+    """Job status/result for async chat completion."""
+    id: str
+    object: str = "chat.completion.job"
+    created: int = Field(default_factory=lambda: int(time.time()))
+    status: str  # queued | running | completed | failed
+    model: str = "mimicgate-browser"
+    response: Optional[ChatCompletionResponse] = None
+    error: Optional[str] = None
+    error_status_code: Optional[int] = None
 
 
 # ── Models endpoint ─────────────────────────────────────────────
@@ -127,7 +176,7 @@ class ModelObject(BaseModel):
     id: str
     object: str = "model"
     created: int = 1700000000
-    owned_by: str = "catgpt"
+    owned_by: str = "mimicgate"
 
 
 class ModelListResponse(BaseModel):
@@ -162,3 +211,80 @@ class ImagesResponse(BaseModel):
     """OpenAI-compatible image generation response."""
     created: int = Field(default_factory=lambda: int(time.time()))
     data: List[ImageData]
+
+
+# -- Responses API (OpenAI Responses /v1/responses) ----------------
+
+
+class ResponseInputItem(BaseModel):
+    """An input item for the Responses API.
+
+    Can be a message with role+content or other input types.
+    """
+    type: str = "message"
+    role: str = "user"
+    content: Optional[Union[str, List[Any]]] = None
+
+
+class ResponsesRequest(BaseModel):
+    """OpenAI Responses API request body (POST /v1/responses).
+
+    Minimal subset needed by Codex CLI/Desktop compatibility.
+    """
+    model: str = "mimicgate-browser"
+    input: Union[str, List[ResponseInputItem]]
+    instructions: Optional[str] = None
+    max_output_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    tools: Optional[list[ToolDefinition]] = None
+    tool_choice: Optional[Union[str, dict]] = None
+    stream: Optional[bool] = False
+    metadata: Optional[dict[str, Any]] = None
+    user: Optional[str] = None
+    reasoning: Optional[ReasoningOptions] = None
+    conversation: Optional[Union[str, dict[str, Any]]] = None
+    previous_response_id: Optional[str] = None
+    store: Optional[bool] = True
+    # MimicGate extension
+    read_aloud: Optional[bool] = False
+
+
+class ResponseOutputText(BaseModel):
+    """A text content part in a Responses API output message."""
+    type: str = "output_text"
+    text: str = ""
+    annotations: list[Any] = Field(default_factory=list)
+
+
+class ResponseOutputMessage(BaseModel):
+    """An output message item in the Responses API response."""
+    type: str = "message"
+    id: str = Field(default_factory=lambda: f"msg_{uuid.uuid4().hex[:24]}")
+    role: str = "assistant"
+    content: list[ResponseOutputText] = Field(default_factory=list)
+
+
+class ResponseOutputToolCall(BaseModel):
+    """A tool call output item in the Responses API response."""
+    type: str = "tool_call"
+    id: str = Field(default_factory=lambda: f"call_{uuid.uuid4().hex[:24]}")
+    name: str = ""
+    arguments: str = ""
+
+
+class ResponsesUsageInfo(BaseModel):
+    """Token usage in Responses API format."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ResponsesResponse(BaseModel):
+    """OpenAI Responses API response envelope."""
+    id: str = Field(default_factory=lambda: f"resp_{uuid.uuid4().hex[:24]}")
+    object: str = "response"
+    created: int = Field(default_factory=lambda: int(time.time()))
+    model: str = "mimicgate-browser"
+    output: list[Union[ResponseOutputMessage, ResponseOutputToolCall]] = Field(default_factory=list)
+    usage: ResponsesUsageInfo = Field(default_factory=ResponsesUsageInfo)

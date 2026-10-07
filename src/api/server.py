@@ -12,140 +12,465 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hmac
+import logging
+import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
+from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.browser.manager import BrowserManager
-from src.browser.auto_login import ensure_logged_in
+from src.browser.auto_login import can_prompt_for_login, ensure_logged_in
 from src.chatgpt.client import ChatGPTClient
+from src.claude.client import ClaudeClient
+from src.gemini.client import GeminiClient
+from src.minimax.client import MiniMaxClient
 from src.config import Config
+from src.api.ollama_routes import ollama_router
 from src.api.routes import router, set_client
 from src.api.openai_routes import openai_router, set_openai_client
+from src.api.monitor_routes import router as monitor_router
+from src.api.browser_gate import configure_tab_pool
+from src.api.telemetry import telemetry
 from src.log import setup_logging
 
 log = setup_logging("api_server", log_file="api_server.log")
 
+
+class SuppressHealthyHealthzAccessFilter(logging.Filter):
+    """Hide noisy successful access logs for health and dashboard telemetry polling while keeping failures visible."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+
+        if (' 200' in message or ' 204' in message or ' 304' in message):
+            if (
+                '"GET /healthz' in message
+                or '"HEAD /healthz' in message
+                or '"HEAD / ' in message
+                or '"GET /v1/gateway/activity' in message
+                or '"GET /v1/tabs' in message
+                or '"GET /v1/models' in message
+            ):
+                return False
+        return True
+
+
+def _install_uvicorn_access_filters() -> None:
+    """Attach access-log filters once at process startup."""
+    access_logger = logging.getLogger("uvicorn.access")
+    if any(isinstance(f, SuppressHealthyHealthzAccessFilter) for f in access_logger.filters):
+        return
+    access_logger.addFilter(SuppressHealthyHealthzAccessFilter())
+
+
+_install_uvicorn_access_filters()
+
 # Global instances — needed for lifespan
 _browser: BrowserManager | None = None
-_client: ChatGPTClient | None = None
+_client: ChatGPTClient | ClaudeClient | GeminiClient | MiniMaxClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: launch browser. Shutdown: close it."""
+    """Initialize the active provider and release its resources on shutdown."""
     global _browser, _client
 
-    log.info("Starting browser for API server...")
-    _browser = BrowserManager()
-    page = await _browser.start()
+    Config.validate_provider()
+    target_url = Config.provider_url()
+    provider_name = Config.provider_name()
+    log.info(f"Provider: {provider_name} ({target_url})")
 
-    # Navigate with retries (DNS can be slow in Docker)
-    max_retries = 5
-    for attempt in range(1, max_retries + 1):
-        try:
-            log.info(f"Navigation attempt {attempt}/{max_retries} to {Config.CHATGPT_URL}")
-            await _browser.navigate(Config.CHATGPT_URL)
-            break
-        except Exception as e:
-            log.warning(f"Navigation attempt {attempt} failed: {e}")
-            if attempt == max_retries:
-                log.error("All navigation attempts failed")
-                raise
-            wait_time = attempt * 5  # 5s, 10s, 15s, 20s
-            log.info(f"Retrying in {wait_time}s...")
-            await asyncio.sleep(wait_time)
+    if Config.PROVIDER == "minimax":
+        _browser = None
+        _client = MiniMaxClient()
+        session = {"exists": False}
+    else:
+        log.info("Starting browser for API server...")
+        _browser = BrowserManager()
+        page = await _browser.start()
 
-    # Apply stealth patches AFTER the first navigation.
-    # In Docker, applying stealth init scripts before navigation
-    # causes Chrome's DNS resolver to fail (ERR_NAME_NOT_RESOLVED).
-    await _browser.apply_stealth_patches()
+        # Navigate with retries (DNS can be slow in Docker)
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                log.info(f"Navigation attempt {attempt}/{max_retries} to {target_url}")
+                await _browser.navigate(target_url)
+                break
+            except Exception as e:
+                log.warning(f"Navigation attempt {attempt} failed: {e}")
+                if attempt == max_retries:
+                    log.error("All navigation attempts failed")
+                    raise
+                wait_time = attempt * 5
+                log.info(f"Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
 
-    await asyncio.sleep(3)
+        await _browser.apply_stealth_patches()
+        await asyncio.sleep(3)
+        session = await _browser.get_session_info()
 
-    if not await _browser.is_logged_in():
-        log.info("Not logged in — starting auto-login flow...")
-        logged_in = await ensure_logged_in(_browser)
-        if not logged_in:
-            log.error("Login failed after auto-login attempt")
-            raise RuntimeError("Could not log in to ChatGPT")
+        if not await _browser.is_logged_in():
+            log.info("Not logged in — starting auto-login flow...")
+            logged_in = await ensure_logged_in(_browser, has_session=session["exists"])
+            if not logged_in:
+                if can_prompt_for_login():
+                    log.error("Login failed after auto-login attempt")
+                    raise RuntimeError(f"Could not log in to {provider_name}")
+                log.warning(
+                    "Login is still required, but startup is non-interactive. "
+                    "API will remain online while the user signs in through the web GUI/VNC."
+                )
+            else:
+                session = await _browser.get_session_info()
 
-    _client = ChatGPTClient(page)
+        if Config.PROVIDER == "claude":
+            _client = ClaudeClient(page)
+        elif Config.PROVIDER == "gemini":
+            _client = GeminiClient(page)
+        else:
+            _client = ChatGPTClient(page)
+
     set_client(_client, _browser)
     set_openai_client(_client)
-    log.info("API server ready — browser launched, logged in")
+    configure_tab_pool(_browser)
+
+    # ── Startup banner ───────────────────────────────────────────
+    W = 60
+    sep = "=" * W
+
+    # Session details
+    if session["exists"]:
+        expires = session.get("expires")
+        exp_str = expires.astimezone().strftime("%Y-%m-%d %H:%M %Z") if expires else "no expiry"
+        email_str = session.get("email") or "unknown"
+        session_line = f"  Account  : {email_str}"
+        expiry_line  = f"  Expires  : {exp_str}"
+        session_status = "ACTIVE SESSION"
+    else:
+        session_line = "  Account  : (no session)"
+        expiry_line  = "  Expires  : —"
+        session_status = "NO SESSION"
+
+    # Runtime flags
+    token_masked = ("*" * len(Config.API_TOKEN)) if Config.API_TOKEN else "(disabled)"
+    flags = [
+        f"  API token    : {token_masked}",
+        f"  Headless     : {Config.HEADLESS}",
+        f"  Log level    : {Config.LOG_LEVEL}",
+        f"  Provider     : {provider_name}",
+        f"  Target URL   : {target_url}",
+        f"  Resp timeout : {Config.RESPONSE_TIMEOUT} ms",
+    ]
+
+    # Endpoints
+    host = f"http://{Config.API_HOST}:{Config.API_PORT}"
+    endpoints = [
+        ("POST", f"{host}/v1/chat/completions", "Chat completions"),
+        ("POST", f"{host}/{{app_name}}/v1/chat/completions", "App-scoped chat completions"),
+        ("POST", f"{host}/v1/chat/completions/async", "Async chat submit"),
+        ("POST", f"{host}/{{app_name}}/v1/chat/completions/async", "App-scoped async submit"),
+        ("GET ", f"{host}/v1/chat/completions/async/{{job_id}}", "Async chat status/result"),
+        ("GET ", f"{host}/{{app_name}}/v1/chat/completions/async/{{job_id}}", "App-scoped async status/result"),
+        ("POST", f"{host}/v1/images/generations", "Image generation"),
+        ("POST", f"{host}/{{app_name}}/v1/images/generations", "App-scoped image generation"),
+        ("GET ", f"{host}/v1/models", "List models"),
+        ("GET ", f"{host}/{{app_name}}/v1/models", "App-scoped models"),
+        ("POST", f"{host}/v1/responses", "Responses API"),
+        ("POST", f"{host}/{{app_name}}/v1/responses", "App-scoped Responses API"),
+        ("POST", f"{host}/api/chat", "Ollama-compatible chat"),
+        ("POST", f"{host}/api/generate", "Ollama-compatible generation"),
+        ("POST", f"{host}/api/embed", "Ollama-compatible embeddings"),
+        ("GET ", f"{host}/api/tags", "Ollama model tags"),
+        ("POST", f"{host}/api/show", "Ollama model metadata"),
+        ("GET ", f"{host}/api/ps", "Ollama active models"),
+        ("POST", f"{host}/chat", "Native chat"),
+        ("POST", f"{host}/thread/new", "New thread"),
+        ("GET ", f"{host}/threads", "List threads"),
+        ("GET ", f"{host}/status", "Status"),
+        ("GET ", f"{host}/healthz", "Health check (no auth)"),
+        ("GET ", f"{host}/docs", "API docs (no auth)"),
+        ("GET ", f"{host}/preview", "Live Multi-Tab Preview Dashboard"),
+        ("GET ", f"{host}/v1/tabs", "List active browser tabs"),
+    ]
+
+    lines = [
+        sep,
+        "  MimicGate — READY".center(W),
+        sep,
+        f"  {session_status}",
+        session_line,
+        expiry_line,
+        f"  Data dir : {Config.BROWSER_DATA_DIR}",
+        "",
+        "  RUNTIME FLAGS",
+        *flags,
+        "",
+        "  ENDPOINTS",
+        *[f"  {m}  {path:<42}  {desc}" for m, path, desc in endpoints],
+        sep,
+    ]
+
+    for line in lines:
+        log.info(line)
+
 
     yield  # Server is running
 
-    log.info("Shutting down — closing browser...")
-    await _browser.close()
-    log.info("Browser closed")
+    if _browser is not None:
+        log.info("Shutting down — closing browser...")
+        await _browser.close()
+        log.info("Browser closed")
 
 
 app = FastAPI(
-    title="ChatGPT API",
+    title="MimicGate API",
     description=(
-        "Browser automation API for ChatGPT. "
+        "MimicGate browser automation API for ChatGPT. "
         "Sends messages via browser and returns responses."
     ),
     version="1.0.0",
     lifespan=lifespan,
+    swagger_ui_parameters={"persistAuthorization": True},
 )
 
+
+def _custom_openapi():
+    """Inject BearerAuth security scheme so Swagger UI shows the Authorize button."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "BearerAuth": {"type": "http", "scheme": "bearer"}
+    }
+    schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
+
 # ── Bearer Token Auth Middleware ────────────────────────────────
-class BearerTokenMiddleware(BaseHTTPMiddleware):
+class BearerTokenMiddleware:
     """
-    Require a Bearer token on all API requests when API_TOKEN is set.
+    Pure ASGI middleware for Bearer token auth.
+
+    Uses raw ASGI protocol instead of BaseHTTPMiddleware to avoid the
+    Python 3.9 event-loop mismatch bug that corrupts asyncio.Lock
+    when exceptions propagate through BaseHTTPMiddleware's task group.
+
     Skips auth for /docs, /openapi.json, and health-check paths.
     """
 
-    OPEN_PATHS = {"/docs", "/redoc", "/openapi.json", "/healthz"}
+    OPEN_PATHS = {
+        b"/docs",
+        b"/redoc",
+        b"/openapi.json",
+        b"/healthz",
+        b"/preview",
+        b"/dashboard",
+        b"/v1/preview",
+    }
 
-    async def dispatch(self, request: Request, call_next):
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         token = Config.API_TOKEN
         if not token:
-            # No token configured — auth disabled
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        path = request.url.path
-        if path in self.OPEN_PATHS:
-            return await call_next(request)
+        path_str = scope.get("path", "")
+        if (
+            path_str in {"/", "/docs", "/redoc", "/openapi.json", "/healthz", "/preview", "/dashboard", "/v1/preview"}
+            or path_str.startswith("/assets")
+            or path_str.startswith("/v1/tabs")
+            or path_str.startswith("/v1/gateway")
+        ):
+            await self.app(scope, receive, send)
+            return
 
         # Check Authorization header
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            provided = auth_header[7:]
-        else:
-            provided = ""
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        auth_header = headers.get("authorization", "")
+        x_api_key = (headers.get("x-api-key") or "").strip()
+        anthropic_api_key = (headers.get("anthropic-api-key") or "").strip()
+        if Config.API_TOKEN_OPTIONAL and not auth_header and not x_api_key and not anthropic_api_key:
+            # Optional-auth mode: no header is allowed.
+            await self.app(scope, receive, send)
+            return
 
-        if provided != token:
-            return JSONResponse(
+        if auth_header.startswith("Bearer "):
+            provided = auth_header[7:].strip()
+        elif x_api_key:
+            provided = x_api_key
+        else:
+            provided = anthropic_api_key
+
+        expected = token.strip()
+        if not _tokens_match(provided, expected):
+            client = scope.get("client")
+            client_host = client[0] if isinstance(client, tuple) and client else "unknown"
+            log.warning(f"Auth failed from {client_host}: invalid token")
+            response = JSONResponse(
                 status_code=401,
-                content={"error": {"message": "Invalid or missing API token. Set Authorization: Bearer <API_TOKEN>", "type": "auth_error"}},
+                content={
+                    "error": {
+                        "message": "Invalid or missing API token. Set Authorization: Bearer <API_TOKEN>",
+                        "type": "auth_error",
+                    }
+                },
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+def _tokens_match(provided: str, expected: str) -> bool:
+    """Constant-time token compare that accepts non-ASCII header/config values.
+
+    Headers are decoded as Latin-1 and API tokens may contain non-ASCII bytes.
+    ``hmac.compare_digest`` rejects non-ASCII *str* inputs with TypeError, which
+    would surface as HTTP 500; comparing UTF-8 bytes keeps mismatches as 401.
+    """
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
+
+
+class TelemetryMiddleware:
+    """Record request latency and gateway traffic for preview dashboard telemetry."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if (
+            path.startswith("/assets")
+            or path in {"/", "/healthz", "/preview", "/dashboard", "/v1/preview", "/docs", "/redoc", "/openapi.json"}
+            or path.startswith("/v1/tabs")
+            or path.startswith("/v1/gateway")
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        telemetry.request_started()
+        start_time = time.monotonic()
+        status_code = 200
+        request_body_chunks: list[bytes] = []
+
+        async def receive_wrapper() -> dict:
+            message = await receive()
+            if message["type"] == "http.request":
+                body = message.get("body", b"")
+                if body and len(b"".join(request_body_chunks)) < 16384:
+                    request_body_chunks.append(body)
+            return message
+
+        async def send_wrapper(message: dict) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 200)
+            await send(message)
+
+        client = scope.get("client")
+        client_host = client[0] if isinstance(client, tuple) and client else "127.0.0.1"
+        method = scope.get("method", "GET")
+        detected_model = Config.provider_name()
+        payload_text = ""
+
+        try:
+            await self.app(scope, receive_wrapper, send_wrapper)
+        except Exception:
+            status_code = 500
+            raise
+        finally:
+            duration_ms = (time.monotonic() - start_time) * 1000.0
+            telemetry.request_finished()
+            if request_body_chunks:
+                try:
+                    import json
+                    raw_body = b"".join(request_body_chunks).decode("utf-8", errors="replace")
+                    try:
+                        parsed = json.loads(raw_body)
+                        if isinstance(parsed, dict):
+                            if parsed.get("model"):
+                                detected_model = str(parsed["model"])
+                            payload_text = json.dumps(parsed, indent=2)
+                        else:
+                            payload_text = raw_body[:1000]
+                    except Exception:
+                        payload_text = raw_body[:1000]
+                except Exception:
+                    pass
+
+            telemetry.record_request(
+                method=method,
+                path=path,
+                model=detected_model,
+                status_code=status_code,
+                duration_ms=duration_ms,
+                client_ip=client_host,
+                payload=payload_text,
             )
 
-        return await call_next(request)
 
-
+app.add_middleware(TelemetryMiddleware)
 app.add_middleware(BearerTokenMiddleware)
+
+cors_origins = Config.api_cors_origins()
+cors_allow_credentials = Config.API_CORS_ALLOW_CREDENTIALS
+if "*" in cors_origins and cors_allow_credentials:
+    log.warning("API_CORS_ALLOW_CREDENTIALS=true is incompatible with API_CORS_ORIGINS='*'; disabling credentials for CORS")
+    cors_allow_credentials = False
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(router)
 app.include_router(openai_router)
+app.include_router(ollama_router)
+app.include_router(monitor_router)
+
+_assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets")
+if not os.path.isdir(_assets_dir):
+    _assets_dir = "assets"
+if os.path.isdir(_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
 
-@app.get("/healthz", include_in_schema=False)
+@app.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
 async def healthz():
     """Unauthenticated health-check for Docker / load-balancers."""
     return {"status": "ok"}
@@ -160,3 +485,4 @@ if __name__ == "__main__":
         port=Config.API_PORT,
         log_level="info",
     )
+

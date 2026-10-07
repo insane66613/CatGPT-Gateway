@@ -1,0 +1,226 @@
+# ChatGPT Model Switching
+
+MimicGate supports browser-backed ChatGPT model switching. When a request includes
+a configured model id, MimicGate opens the ChatGPT model picker, selects the
+matching model and effort, waits for confirmation, and then sends the prompt.
+
+On the ChatGPT Business UI checked in September 2026, the composer button shows
+the current effort. Its menu has **Select model** (`Latest`, `GPT-5.6 Sol`, and
+`GPT-5.5` on the checked account) and a **Power** slider with `Instant`,
+`Medium`, `High`, and `Extra High`. Model availability varies by account.
+MimicGate also keeps the older Advanced/Configure picker fallbacks.
+
+## Quick Use
+
+OpenAI-compatible request:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer dummy123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "messages": [{"role": "user", "content": "Say which mode you are using."}]
+  }'
+```
+
+For `/v1/responses`, use the same base model with `"reasoning": {"effort": "high"}`.
+Clients normally send these fields from their saved model and reasoning settings;
+users do not need to edit JSON for each request.
+
+Native request:
+
+```bash
+curl http://localhost:8000/chat \
+  -H "Authorization: Bearer dummy123" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-5.5", "message": "Hello from a selected model."}'
+```
+
+List configured and discovered model ids:
+
+```bash
+curl http://localhost:8000/v1/models -H "Authorization: Bearer dummy123"
+```
+
+The model list advertises base models rather than a separate entry for each
+reasoning effort. For example, select `gpt-5.5` and send `reasoning_effort` instead
+of choosing `gpt-5.5-high` from the list. Distinct Pro entries remain listed.
+
+Existing effort-suffixed ids still work, including configured aliases such as
+`gpt-5.5-thinking`. Clients without a reasoning setting can continue sending
+these ids, although they no longer appear in `/v1/models` when their base model
+is also listed. A standalone configured model remains listed even if its name
+ends in an effort label.
+Ollama's model list and effort profiles remain unchanged.
+
+An explicit `reasoning_effort` overrides the configured effort for a base model.
+Without it, configured models use `CHATGPT_MODEL_SETTINGS`; `mimicgate-browser`
+preserves the browser selection unless a default model is configured. Keep
+legacy suffixed requests free of a conflicting effort field: configured aliases
+use the explicit field when supplied, while dynamically resolved suffixes take
+precedence over that field. This compatibility behavior is unchanged.
+
+Requested effort is mapped to the available browser controls, using the nearest
+available level when necessary. The API field does not create effort levels
+that the account's picker does not offer.
+
+## Configuration
+
+`CHATGPT_MODEL_ALIASES` maps public API ids to visible ChatGPT **Model** labels:
+
+```env
+CHATGPT_MODEL_ALIASES=gpt-5.6-sol=GPT-5.6 Sol|5.6 Sol|Instant,gpt-5.5=GPT-5.5|5.5
+```
+
+Format:
+
+```text
+public_id=Primary UI Label|Alternate UI Label|Another Alternate
+```
+
+`CHATGPT_MODEL_SETTINGS` maps those ids to the **Effort** submenu:
+
+```env
+CHATGPT_MODEL_SETTINGS=gpt-5.6-sol=Instant,gpt-5.6-sol-medium=Medium,gpt-5.6-sol-high=High,gpt-5.6-sol-extra-high=Extra High,gpt-5.6-sol-pro=Pro,gpt-5.5=Instant,gpt-5.5-medium=Medium,gpt-5.5-high=High,gpt-5.5-thinking=High,gpt-5.5-extra-high=Extra High,gpt-5.5-pro=Pro
+```
+
+`gpt-5.5-thinking` remains as a compatibility alias for GPT-5.5 + High.
+
+If a request uses `mimicgate-browser`, MimicGate keeps the current browser-selected
+model unless `CHATGPT_DEFAULT_MODEL` is set:
+
+```env
+CHATGPT_DEFAULT_MODEL=gpt-5.6-sol-high
+```
+
+By default, if a configured model is not visible in the account's picker, MimicGate
+logs the visible options and continues with the currently selected browser
+model. To fail the request instead:
+
+```env
+CHATGPT_MODEL_SWITCH_STRICT=true
+```
+
+`CHATGPT_MODEL_SWITCH_TIMEOUT` is measured in milliseconds and controls how long
+MimicGate waits for the selected model label to appear after clicking an option.
+For example:
+
+```env
+CHATGPT_MODEL_SWITCH_TIMEOUT=10000  # 10 seconds
+```
+
+Do not set `CHATGPT_MODEL_SWITCH_TIMEOUT=1` expecting one second; that is 1 ms.
+
+## Per-app reasoning defaults
+
+Apps that do not send reasoning effort can use a default configured in MimicGate:
+
+```env
+CHATGPT_APP_REASONING_EFFORTS=karakeep=medium,paperlessgpt=high,linkwarden=low,mealie=medium
+```
+
+The app name comes from the URL path. For example, requests to
+`http://mimicgate:8000/paperlessgpt/v1/chat/completions` use `high`, while requests
+to `/karakeep/v1/chat/completions` use `medium`. Each app can keep sending a base
+model such as `gpt-5.6-sol`; model selection remains separate from effort.
+
+Set this variable on the MimicGate container and recreate it after changing the
+value. The supplied Compose file passes it through from the host environment.
+Other Compose files must include it under the MimicGate service's `environment`.
+The apps themselves do not need a reasoning setting.
+
+Defaults apply to app-scoped Chat Completions and Responses, including streamed
+and asynchronous chat requests. They also apply to image attachments sent in
+those requests. They do not apply to image-generation, native `/chat`, or Ollama
+routes, or to other providers.
+
+Explicit request effort (`reasoning_effort` for Chat Completions or
+`reasoning.effort` for Responses) takes precedence. Legacy effort-suffixed model
+IDs and Pro selections retain their existing behavior. A legacy effort-suffixed
+`CHATGPT_DEFAULT_MODEL` also retains its behavior when a browser alias is used.
+Avoid sending contradictory model suffixes and explicit effort fields.
+
+Plain `/v1/...` requests and unknown app names keep the existing effort defaults.
+An empty variable leaves behavior unchanged. Matching is case-insensitive;
+app names use letters, digits, dots, underscores, or hyphens. Malformed entries,
+unknown effort values, and duplicate app names fail validation at startup.
+Effort is mapped to the account's available browser controls as usual.
+
+## Notes
+
+- Model availability depends on the logged-in ChatGPT account and plan. Free/Go
+  accounts may show Luna and a Think control instead of these controls.
+- MimicGate uses **Select model** and **Power** on the current picker. Older
+  layouts use **Show advanced options**, **Model**, and **Effort**.
+- UI labels change over time. Update `CHATGPT_MODEL_ALIASES` when ChatGPT
+  renames picker items.
+- The CLI also supports `/model <name>`, which changes the model id sent to the
+  API for later messages.
+- Issue #8 is implemented by `src/chatgpt/model_registry.py` and
+  `ChatGPTClient.ensure_model()`.
+
+---
+
+# Google Gemini Model Switching
+
+When `PROVIDER=gemini`, MimicGate supports browser-backed model switching for Google Gemini (`https://gemini.google.com`).
+
+MimicGate interacts with Gemini's mode switcher (`<bard-mode-switcher>`) to select the requested model tier before submitting the prompt.
+
+## Available Gemini Models
+
+| Public Model ID | Menu Label | Description |
+| :--- | :--- | :--- |
+| `gemini-browser` | *(Active model)* | Preserves whichever model is currently selected in the browser UI. |
+| `gemini-3.8-flash` | `3.8 Flash` / `Flash` | Default high-speed multimodal model. |
+| `gemini-3.6-flash` | `3.6 Flash` | Previous generation Flash model. |
+| `gemini-3.5-flash-lite`| `3.5 Flash-Lite` | Ultra-low-latency lightweight model. |
+| `gemini-3.1-pro` | `3.1 Pro` | Advanced reasoning model (available on Google One AI Premium / Advanced accounts). |
+| `gemini-extended-thinking` | `Extended thinking` | Deep reasoning with explicit chain-of-thought. |
+
+Supported aliases:
+- `gemini-flash`, `gemini-2.0-flash`, `gemini-1.5-flash` map to Flash (`gemini-3.8-flash`).
+- `gemini-pro`, `gemini-1.5-pro` map to `3.1 Pro` (`gemini-3.1-pro`).
+
+## Configuration
+
+### Default Model (`GEMINI_DEFAULT_MODEL`)
+
+Sets the model selected when a request does not specify one, or when `gemini-browser` is requested:
+
+```env
+GEMINI_DEFAULT_MODEL=gemini-browser
+```
+
+Default: `gemini-browser` (preserves the model currently selected in the Gemini web UI). To lock MimicGate to a specific model regardless of what is selected in the UI:
+
+```env
+GEMINI_DEFAULT_MODEL=gemini-3.8-flash
+```
+
+### Model Fallback Control (`GEMINI_MODEL_FALLBACK`)
+
+Controls behavior when an application sends a model ID that is not supported by Gemini (for example, downstream apps configured with ChatGPT model names like `gpt-5.6-sol` or `gpt-4o`):
+
+```env
+# Allow unrecognized models to fall back to GEMINI_DEFAULT_MODEL (default)
+GEMINI_MODEL_FALLBACK=true
+
+# Reject unrecognized models with HTTP 400 and log an error with supported models
+GEMINI_MODEL_FALLBACK=false
+```
+
+When `GEMINI_MODEL_FALLBACK=true`, MimicGate logs a warning and routes the request to `GEMINI_DEFAULT_MODEL`.
+When `GEMINI_MODEL_FALLBACK=false`, MimicGate rejects the request with HTTP 400 and logs an error listing available models.
+
+---
+
+## Related Documentation
+
+- [Documentation Index](README.md): Overview of all MimicGate Gateway guides and manuals.
+- [Gemini Provider Guide](GEMINI_PROVIDER_GUIDE.md): Dedicated Gemini setup, models, and features.
+- [API Reference](API_REFERENCE.md): Complete endpoint specifications and parameters.
+- [Environment Variables](ENVIRONMENT_VARIABLES.md): Full reference of model configuration variables.
+- [Installation & Setup Guide](INSTALLATION_AND_SETUP.md): Getting started with MimicGate.

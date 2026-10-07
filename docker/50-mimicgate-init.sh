@@ -1,0 +1,97 @@
+#!/bin/sh
+set -e
+
+# ── MimicGate Container Initialization (runs as root before startapp.sh) ──
+
+echo "[mimicgate-init] Preparing runtime directories..."
+mkdir -p /app/browser_data /app/logs /app/state /app/downloads/images /app/downloads/audio
+
+# This script runs after jlesage initializes USER_ID/GROUP_ID and the app user.
+# Use the base-image helper so bind mounts and network shares are handled safely.
+take-ownership /app/browser_data
+take-ownership /app/logs
+take-ownership /app/state
+take-ownership /app/downloads
+
+# Clean up stale Chromium locks from previous crash/restart
+rm -f /app/browser_data/SingletonLock \
+      /app/browser_data/SingletonSocket \
+      /app/browser_data/SingletonCookie
+echo "[mimicgate-init] Stale Chromium locks cleaned"
+
+# Pre-resolve DNS for Chrome to prevent Docker DNS proxy (127.0.0.11) issues
+echo "[mimicgate-init] Pre-resolving DNS for Chrome..."
+python3 -c "
+import os, socket
+provider = os.environ.get('PROVIDER', 'chatgpt').lower()
+common_domains = [
+    'challenges.cloudflare.com',
+    'static.cloudflareinsights.com',
+]
+chatgpt_domains = [
+    'chatgpt.com',
+    'cdn.oaistatic.com',
+    'ab.chatgpt.com',
+    'auth.openai.com',
+    'auth0.openai.com',
+    'openai.com',
+    'api.openai.com',
+    'platform.openai.com',
+]
+claude_domains = [
+    'claude.ai',
+    'api.claude.ai',
+    'cdn.claude.ai',
+    'anthropic.com',
+    'www.anthropic.com',
+]
+domains = common_domains + (claude_domains if provider == 'claude' else chatgpt_domains)
+gemini_domains = [
+    'gemini.google.com',
+    'accounts.google.com',
+    'myaccount.google.com',
+    'google.com',
+    'www.google.com',
+    'google.ca',
+    'www.google.ca',
+    'ssl.gstatic.com',
+    'www.gstatic.com',
+    'gemini.gstatic.com',
+    'fonts.gstatic.com',
+    'fonts.googleapis.com',
+    'apis.google.com',
+    'lh3.googleusercontent.com',
+    'play.google.com',
+    'clients6.google.com',
+    'signaler-pa.clients6.google.com',
+    'push.clients6.google.com',
+    'content-push.googleapis.com',
+    'recaptcha.net',
+    'www.recaptcha.net',
+]
+if provider == 'claude':
+    domains = common_domains + claude_domains
+elif provider == 'gemini':
+    domains = common_domains + gemini_domains
+else:
+    domains = common_domains + chatgpt_domains
+resolved = []
+for d in domains:
+    try:
+        ip = socket.gethostbyname(d)
+        resolved.append(f'{ip} {d}')
+        print(f'  {d} -> {ip}')
+    except Exception as e:
+        print(f'  {d} -> FAILED ({e})')
+
+if resolved:
+    try:
+        with open('/etc/hosts', 'a') as f:
+            f.write('\n# Pre-resolved DNS for Chrome (added by mimicgate-init)\n')
+            for entry in resolved:
+                f.write(entry + '\n')
+        print(f'  Added {len(resolved)} entries to /etc/hosts')
+    except Exception as e:
+        print(f'  WARNING: Could not write to /etc/hosts: {e}')
+" || true
+echo "[mimicgate-init] Initialization complete."

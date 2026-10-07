@@ -1,74 +1,100 @@
-# ── CatGPT Gateway — Docker Compose ─────────────────────────────
-# Runs the full application with headed Chrome inside Docker.
-# Uses Xvfb (virtual display) + noVNC (browser-based VNC) for login.
-#
-# Usage:
-#   docker compose up --build       # First time (builds image)
-#   docker compose up               # Subsequent runs
-#   docker compose logs -f catgpt   # Watch logs
-#   docker compose down             # Stop everything
-#
-# Ports:
-#   http://localhost:8000  — FastAPI API (OpenAI-compatible)
-#   http://localhost:6080  — noVNC web UI (for login / debugging)
-
 services:
-  catgpt:
+  # MimicGate Gateway - Enhanced Container Mock for Chat Apps
+  mimicgate:
+    image: ${MIMICGATE_IMAGE:-${CATGPT_IMAGE:-ghcr.io/thebadfella/mimicgate:latest}}
+    pull_policy: ${MIMICGATE_PULL_POLICY:-${CATGPT_PULL_POLICY:-missing}}
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: catgpt
-    restart: unless-stopped
-
-    ports:
-      - "8000:8000"   # FastAPI API
-      - "6080:6080"   # noVNC web UI
-
-    volumes:
-      # Persistent browser session — survives container restarts
-      - catgpt_browser_data:/app/browser_data
-      # Logs accessible from host
-      - ./docker-logs:/app/logs
-
-    environment:
-      # Browser (headed on virtual display)
-      - HEADLESS=false
-      - SLOW_MO=50
-      - DISPLAY=:99
-      - DISPLAY_WIDTH=1366
-      - DISPLAY_HEIGHT=768
-      - DISPLAY_DEPTH=24
-
-      # ChatGPT
-      - CHATGPT_URL=https://chatgpt.com
-
-      # Timeouts
-      - RESPONSE_TIMEOUT=120000
-      - SELECTOR_TIMEOUT=10000
-
-      # Human simulation
-      - TYPING_SPEED_MIN=50
-      - TYPING_SPEED_MAX=150
-      - THINKING_PAUSE_MIN=1000
-      - THINKING_PAUSE_MAX=3000
-
-      # API
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
-      - API_TOKEN=dummy123
-
-      # VNC Authentication
-      - VNC_PASSWORD=catgpt
-
-      # Logging (verbose for Docker)
-      - LOG_LEVEL=DEBUG
-      - VERBOSE=true
-
-    # Chromium needs these for sandbox
+      dockerfile: docker/Dockerfile
+    container_name: mimicgate
     security_opt:
       - seccomp=unconfined
+      - no-new-privileges:true
+    restart: unless-stopped
     shm_size: "2gb"
-
+    deploy:
+      resources:
+        limits:
+          pids: 512
+    networks:
+      - app_services
+    ports:
+      - "8650:8000" # API Port
+      - "${MIMICGATE_VNC_PORT:-${CATGPT_VNC_PORT:-${VNC_PORT:-5800}}}:5800" # jlesage Web GUI (HTTP, or HTTPS with SECURE_CONNECTION=1)
+      # - "5900:5900" # Direct VNC port (optional)
+    tmpfs:
+      - /tmp:exec,mode=1777
+      - /app/browser_data/Default/Cache:mode=1777
+      - /app/browser_data/Default/Code Cache:mode=1777
+    environment:
+      # Application GUI (jlesage)
+      APP_NAME: "MimicGate"
+      SECURE_CONNECTION: "0"
+      KEEP_APP_RUNNING: "1"
+      USER_ID: ${MIMICGATE_USER_ID:-${CATGPT_USER_ID:-1000}}
+      GROUP_ID: ${MIMICGATE_GROUP_ID:-${CATGPT_GROUP_ID:-1000}}
+      DISPLAY_WIDTH: 1366
+      DISPLAY_HEIGHT: 768
+      # Browser (headed on virtual display)
+      HEADLESS: "false"
+      SLOW_MO: 50
+      # Provider: "chatgpt", "claude", "gemini", or "minimax"
+      PROVIDER: ${PROVIDER:-chatgpt}
+      # ChatGPT
+      CHATGPT_URL: "https://chatgpt.com"
+      CHATGPT_PROJECT_URL: ${CHATGPT_PROJECT_URL:-}
+      CHATGPT_APP_REASONING_EFFORTS: ${CHATGPT_APP_REASONING_EFFORTS:-}
+      # Claude
+      CLAUDE_URL: ${CLAUDE_URL:-https://claude.ai}
+      # Gemini
+      GEMINI_URL: ${GEMINI_URL:-https://gemini.google.com}
+      GEMINI_DEFAULT_MODEL: ${GEMINI_DEFAULT_MODEL:-gemini-browser}
+      GEMINI_MODEL_FALLBACK: ${GEMINI_MODEL_FALLBACK:-true}
+      # MiniMax API
+      MINIMAX_REGION: ${MINIMAX_REGION:-global_en}
+      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M2.7}
+      # Timeouts
+      RESPONSE_TIMEOUT: 120000
+      SELECTOR_TIMEOUT: 10000
+      MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS:-3}
+      MAX_ACTIVE_TABS: ${MAX_ACTIVE_TABS:-4}
+      # Human simulation
+      TYPING_SPEED_MIN: 50
+      TYPING_SPEED_MAX: 150
+      THINKING_PAUSE_MIN: 1000
+      THINKING_PAUSE_MAX: 3000
+      # API
+      API_HOST: "0.0.0.0"
+      API_PORT: 8000
+      API_TOKEN: ${MIMICGATE_API_KEY:-${CATGPT_API_KEY:-dummy123}}
+      API_TOKEN_OPTIONAL: "true"
+      # Optional: keep large system instructions in thread context and send compact reminders
+      API_THREAD_CONTRACT_MODE: "true"
+      API_THREAD_CONTRACT_TTL_SECONDS: 3600
+      # Optional: map request.user to dedicated chat threads for app-level isolation
+      API_APP_THREAD_MODE: "true"
+      API_APP_THREAD_TTL_SECONDS: 86400
+      # Optional: merge header-only rows into the next item's note/context in structured JSON outputs
+      API_HEADER_ROW_MERGE_MODE: "true"
+      API_APP_THREAD_DELETE_EXPIRED: "true"
+      # Durable OpenAI conversation and Responses API routing
+      API_CONVERSATION_DB: /app/state/conversations.sqlite3
+      API_CONVERSATION_RETENTION_SECONDS: ${API_CONVERSATION_RETENTION_SECONDS:-2592000}
+      API_CONVERSATION_MAX_ROUTES: ${API_CONVERSATION_MAX_ROUTES:-10000}
+      # VNC Authentication & Web GUI URL
+      VNC_PASSWORD: ${MIMICGATE_VNC_PASSWORD:-${CATGPT_VNC_PASSWORD:-mimicgate}}
+      VNC_PORT: ${MIMICGATE_VNC_PORT:-${CATGPT_VNC_PORT:-${VNC_PORT:-5800}}}
+      VNC_URL: ${MIMICGATE_VNC_URL:-${CATGPT_VNC_URL:-${VNC_URL:-}}}
+      # Logging (verbose for Docker)
+      LOG_LEVEL: "DEBUG"
+      VERBOSE: "true"
+    volumes:
+      - ${DOCKERDIR:-.}/appdata/mimicgate/config:/config
+      - ${DOCKERDIR:-.}/appdata/mimicgate/browser:/app/browser_data
+      - ${DOCKERDIR:-.}/appdata/mimicgate/logs:/app/logs
+      - ${DOCKERDIR:-.}/appdata/mimicgate/state:/app/state
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
@@ -76,6 +102,7 @@ services:
       start_period: 60s
       retries: 3
 
-volumes:
-  catgpt_browser_data:
-    driver: local
+networks:
+  app_services:
+    name: app_services
+    driver: bridge
