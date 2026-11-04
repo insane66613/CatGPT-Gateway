@@ -241,8 +241,8 @@ curl http://localhost:8650/v1/chat/completions \
 | Variable | Default | Purpose |
 |---|---|---|
 | `PROVIDER` | `chatgpt` | Active provider: `chatgpt`, `claude`, `gemini`, or `minimax`. |
-| `MIMICGATE_API_KEY` | `dummy123` | Bearer token required for API requests. |
-| `MIMICGATE_VNC_PASSWORD` | `mimicgate` | Password for the browser GUI at port 5800. |
+| `MIMICGATE_API_KEY` | required | Bearer token required for API requests (Compose has no insecure default). |
+| `MIMICGATE_VNC_PASSWORD` | required | Password for the browser GUI at port 5800 (Compose has no insecure default). |
 | `MAX_CONCURRENT_REQUESTS` | `3` | Maximum simultaneous browser-backed requests. |
 | `MAX_ACTIVE_TABS` | `5` | Maximum active tabs before LRU eviction. |
 | `CHATGPT_DEFAULT_MODEL` | UI default | Preferred ChatGPT model selection. |

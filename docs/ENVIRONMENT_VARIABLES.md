@@ -34,10 +34,10 @@ These are the variables consumed directly by `docker-compose.yml`:
 | `CATGPT_USER_ID` | _empty_ | Legacy alias for `MIMICGATE_USER_ID`. |
 | `MIMICGATE_GROUP_ID` | `1000` | Host group ID mapped to container `GROUP_ID`. |
 | `CATGPT_GROUP_ID` | _empty_ | Legacy alias for `MIMICGATE_GROUP_ID`. |
-| `MIMICGATE_API_KEY` | `dummy123` | Value passed to container `API_TOKEN`. |
-| `CATGPT_API_KEY` | _empty_ | Legacy alias for `MIMICGATE_API_KEY`. |
-| `MIMICGATE_VNC_PASSWORD` | `mimicgate` | Value passed to container `VNC_PASSWORD`. |
-| `CATGPT_VNC_PASSWORD` | _empty_ | Legacy alias for `MIMICGATE_VNC_PASSWORD`. |
+| `MIMICGATE_API_KEY` | `required` | Strong bearer token passed to API_TOKEN; legacy CATGPT_API_KEY may be used instead. |
+| `CATGPT_API_KEY` | _empty_ | Legacy fallback for MIMICGATE_API_KEY; one of the two must be set. |
+| `MIMICGATE_VNC_PASSWORD` | `required` | Non-default VNC password; legacy CATGPT_VNC_PASSWORD may be used instead. |
+| `CATGPT_VNC_PASSWORD` | _empty_ | Legacy fallback for MIMICGATE_VNC_PASSWORD; one of the two must be set. |
 | `MIMICGATE_VNC_PORT` | `5800` | Host port mapped to the web GUI / VNC session. |
 | `CATGPT_VNC_PORT` | _empty_ | Legacy alias for `MIMICGATE_VNC_PORT`. |
 | `VNC_PORT` | `5800` | Fallback host port mapped to the web GUI / VNC session. |
@@ -156,8 +156,8 @@ When running Python directly, set these in the shell or root `.env`. In Docker, 
 | `THINKING_PAUSE_MIN` | `500` | Minimum pre-submit pause in milliseconds. |
 | `THINKING_PAUSE_MAX` | `1500` | Maximum pre-submit pause in milliseconds. |
 | `POLL_INTERVAL_MS` | `300` | Completion polling interval in milliseconds. |
-| `LOG_LEVEL` | `DEBUG` | Python logging level. |
-| `VERBOSE` | `true` | Enable verbose diagnostic output. |
+| `LOG_LEVEL` | `INFO` | Python logging level. |
+| `VERBOSE` | `false` | Enable verbose diagnostic output. |
 
 ### Ollama compatibility
 
@@ -189,7 +189,7 @@ When running Python directly, set these in the shell or root `.env`. In Docker, 
 | `KEEP_APP_RUNNING` | `1` | Keep the GUI container alive when the app exits. |
 | `USER_ID` | `1000` | Container process user ID. |
 | `GROUP_ID` | `1000` | Container process group ID. |
-| `VNC_PASSWORD` | `mimicgate` | Web GUI/VNC password. |
+| `VNC_PASSWORD` | _empty_ | Direct-runtime Web GUI/VNC password; Compose requires MIMICGATE_VNC_PASSWORD or its legacy fallback. |
 | `VNC_PORT` | `5800` | Web GUI/noVNC external port number. |
 | `VNC_URL` | _empty_ | Optional reverse-proxy or custom hostname URL for the web GUI. |
 

@@ -84,12 +84,17 @@ class BearerTokenMiddlewareTests(unittest.TestCase):
     def setUp(self) -> None:
         self.original_token = Config.API_TOKEN
         self.original_optional = Config.API_TOKEN_OPTIONAL
+        self.original_host = Config.API_HOST
+        self.original_allow = Config.API_ALLOW_UNAUTHENTICATED
         Config.API_TOKEN = "secret"
         Config.API_TOKEN_OPTIONAL = False
+        Config.API_ALLOW_UNAUTHENTICATED = False
 
     def tearDown(self) -> None:
         Config.API_TOKEN = self.original_token
         Config.API_TOKEN_OPTIONAL = self.original_optional
+        Config.API_HOST = self.original_host
+        Config.API_ALLOW_UNAUTHENTICATED = self.original_allow
 
     def test_accepts_matching_bearer_token(self) -> None:
         events = asyncio.run(
@@ -173,10 +178,6 @@ class BearerTokenMiddlewareTests(unittest.TestCase):
             Config.API_CORS_ORIGINS = original
 
     def test_public_bind_without_token_fails_closed(self) -> None:
-        original_host = Config.API_HOST
-        original_allow = Config.API_ALLOW_UNAUTHENTICATED
-        original_token = Config.API_TOKEN
-        original_optional = Config.API_TOKEN_OPTIONAL
         Config.API_TOKEN = ""
         Config.API_TOKEN_OPTIONAL = False
         Config.API_HOST = "0.0.0.0"
@@ -186,19 +187,10 @@ class BearerTokenMiddlewareTests(unittest.TestCase):
             async with lifespan(app):
                 self.fail("lifespan should reject an unauthenticated public bind")
 
-        try:
-            with self.assertRaisesRegex(RuntimeError, "Refusing to start unauthenticated API"):
-                asyncio.run(enter_lifespan())
-        finally:
-            Config.API_HOST = original_host
-            Config.API_ALLOW_UNAUTHENTICATED = original_allow
-            Config.API_TOKEN = original_token
-            Config.API_TOKEN_OPTIONAL = original_optional
-
+        with self.assertRaisesRegex(RuntimeError, "Refusing to start unauthenticated API"):
+            asyncio.run(enter_lifespan())
 
     def test_optional_token_does_not_expose_lan(self) -> None:
-        original = (Config.API_HOST, Config.API_ALLOW_UNAUTHENTICATED,
-                    Config.API_TOKEN, Config.API_TOKEN_OPTIONAL)
         Config.API_HOST = "192.168.1.5"
         Config.API_ALLOW_UNAUTHENTICATED = False
         Config.API_TOKEN = "test-token"
@@ -208,12 +200,8 @@ class BearerTokenMiddlewareTests(unittest.TestCase):
             async with lifespan(app):
                 self.fail("optional token must not expose LAN listener")
 
-        try:
-            with self.assertRaisesRegex(RuntimeError, "Refusing to start unauthenticated API"):
-                asyncio.run(enter_lifespan())
-        finally:
-            (Config.API_HOST, Config.API_ALLOW_UNAUTHENTICATED,
-             Config.API_TOKEN, Config.API_TOKEN_OPTIONAL) = original
+        with self.assertRaisesRegex(RuntimeError, "Refusing to start unauthenticated API"):
+            asyncio.run(enter_lifespan())
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ MIMICGATE_GROUP_ID=1000
 
 - **Logs** are bind-mounted under `${DOCKERDIR}/appdata/mimicgate/logs` on the host.
 
-- **The jlesage web GUI** at `http://localhost:5800` lets you see and interact with the browser (useful for debugging, CAPTCHAs, or re-login). Default VNC password: `mimicgate`.
+- **The jlesage web GUI** at `http://localhost:5800` lets you see and interact with the browser (useful for debugging, CAPTCHAs, or re-login). Set `MIMICGATE_VNC_PASSWORD` (or legacy `CATGPT_VNC_PASSWORD`) in `.env`; Compose refuses to start without one.
 
 ---
 
@@ -233,13 +233,13 @@ client = OpenAI(base_url="http://localhost:8000/v1", api_key="dummy123")
 
 **Open paths** (no token required): `/docs`, `/redoc`, `/openapi.json`, `/healthz`
 
-To disable auth, set `API_TOKEN=` (empty string) in `.env`.
+To disable auth on a loopback bind only, set `API_TOKEN=` (empty string). Non-loopback binds without a required token need the explicit opt-in `API_ALLOW_UNAUTHENTICATED=true`.
 
 ### Web GUI Password
 
 The jlesage browser UI at `http://localhost:5800` is password-protected.
 
-Default: `mimicgate`. Change it via `VNC_PASSWORD` in `.env` or `docker-compose.yml`.
+Set `MIMICGATE_VNC_PASSWORD` (or legacy `CATGPT_VNC_PASSWORD`) in the Compose `.env`. There is no insecure built-in default.
 
 ---
 

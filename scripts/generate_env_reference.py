@@ -94,8 +94,8 @@ SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("THINKING_PAUSE_MIN", "500", "Minimum pre-submit pause in milliseconds."),
         ("THINKING_PAUSE_MAX", "1500", "Maximum pre-submit pause in milliseconds."),
         ("POLL_INTERVAL_MS", "300", "Completion polling interval in milliseconds."),
-        ("LOG_LEVEL", "DEBUG", "Python logging level."),
-        ("VERBOSE", "true", "Enable verbose diagnostic output."),
+        ("LOG_LEVEL", "INFO", "Python logging level."),
+        ("VERBOSE", "false", "Enable verbose diagnostic output."),
     )),
     ("Ollama compatibility", (
         ("OLLAMA_EMBEDDING_MODELS", "nomic-embed-text", "Comma-separated model IDs treated as embedding models."),
@@ -118,7 +118,7 @@ SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("KEEP_APP_RUNNING", "1", "Keep the GUI container alive when the app exits."),
         ("USER_ID", "1000", "Container process user ID."),
         ("GROUP_ID", "1000", "Container process group ID."),
-        ("VNC_PASSWORD", "mimicgate", "Web GUI/VNC password."),
+        ("VNC_PASSWORD", "empty", "Direct-runtime Web GUI/VNC password; Compose requires MIMICGATE_VNC_PASSWORD or its legacy fallback."),
         ("VNC_PORT", "5800", "Web GUI/noVNC external port number."),
         ("VNC_URL", "empty", "Optional reverse-proxy or custom hostname URL for the web GUI."),
     )),
@@ -134,10 +134,10 @@ COMPOSE_INPUTS: tuple[tuple[str, str, str], ...] = (
     ("CATGPT_USER_ID", "empty", "Legacy alias for `MIMICGATE_USER_ID`."),
     ("MIMICGATE_GROUP_ID", "1000", "Host group ID mapped to container `GROUP_ID`."),
     ("CATGPT_GROUP_ID", "empty", "Legacy alias for `MIMICGATE_GROUP_ID`."),
-    ("MIMICGATE_API_KEY", "dummy123", "Value passed to container `API_TOKEN`."),
-    ("CATGPT_API_KEY", "empty", "Legacy alias for `MIMICGATE_API_KEY`."),
-    ("MIMICGATE_VNC_PASSWORD", "mimicgate", "Value passed to container `VNC_PASSWORD`."),
-    ("CATGPT_VNC_PASSWORD", "empty", "Legacy alias for `MIMICGATE_VNC_PASSWORD`."),
+    ("MIMICGATE_API_KEY", "required", "Strong bearer token passed to API_TOKEN; legacy CATGPT_API_KEY may be used instead."),
+    ("CATGPT_API_KEY", "empty", "Legacy fallback for MIMICGATE_API_KEY; one of the two must be set."),
+    ("MIMICGATE_VNC_PASSWORD", "required", "Non-default VNC password; legacy CATGPT_VNC_PASSWORD may be used instead."),
+    ("CATGPT_VNC_PASSWORD", "empty", "Legacy fallback for MIMICGATE_VNC_PASSWORD; one of the two must be set."),
     ("MIMICGATE_VNC_PORT", "5800", "Host port mapped to the web GUI / VNC session."),
     ("CATGPT_VNC_PORT", "empty", "Legacy alias for `MIMICGATE_VNC_PORT`."),
     ("VNC_PORT", "5800", "Fallback host port mapped to the web GUI / VNC session."),
@@ -157,8 +157,8 @@ COMPOSE_INPUTS: tuple[tuple[str, str, str], ...] = (
 )
 
 DYNAMIC_SOURCE_VARIABLES = {"DISPLAY_WIDTH", "DISPLAY_HEIGHT"}
-# Matches every `${NAME` occurrence, including the inner name of a nested
-# default such as `${MIMICGATE_IMAGE:-${CATGPT_IMAGE:-default}}`.
+# Matches every `${NAME` occurrence, including nested defaults and required-value
+# expressions such as `${MIMICGATE_API_KEY:-${CATGPT_API_KEY:?message}}`.
 COMPOSE_SUBSTITUTION_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)")
 COMPOSE_KEY_RE = re.compile(r"^\s{6}([A-Z][A-Z0-9_]*):", re.MULTILINE)
 
