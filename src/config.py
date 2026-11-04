@@ -269,8 +269,8 @@ class Config:
     POLL_INTERVAL_MS: int = int(os.getenv("POLL_INTERVAL_MS", "300"))
 
     # Logging
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG")
-    VERBOSE: bool = os.getenv("VERBOSE", "true").lower() == "true"
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    VERBOSE: bool = os.getenv("VERBOSE", "false").lower() == "true"
 
     # API (Phase 3)
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
@@ -302,12 +302,13 @@ class Config:
     API_HEADER_ROW_MERGE_MODE: bool = os.getenv("API_HEADER_ROW_MERGE_MODE", "false").lower() == "true"
     RATE_LIMIT_SECONDS: int = int(os.getenv("RATE_LIMIT_SECONDS", "5"))
     API_TOKEN: str = os.getenv("API_TOKEN", "")  # Bearer token for API auth (empty = no auth)
+    API_ALLOW_UNAUTHENTICATED: bool = os.getenv("API_ALLOW_UNAUTHENTICATED", "false").lower() == "true"
 
     # VNC
     VNC_PASSWORD: str = (
         os.getenv("MIMICGATE_VNC_PASSWORD")
         or os.getenv("CATGPT_VNC_PASSWORD")
-        or os.getenv("VNC_PASSWORD", "mimicgate")
+        or os.getenv("VNC_PASSWORD", "")
     )
     VNC_PORT: int = int(
         os.getenv("MIMICGATE_VNC_PORT")

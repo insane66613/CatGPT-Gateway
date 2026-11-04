@@ -85,6 +85,16 @@ async def lifespan(app: FastAPI):
     """Initialize the active provider and release its resources on shutdown."""
     global _browser, _client
 
+    # Optional token mode is unauthenticated even when a token is configured.
+    unauthenticated = not Config.API_TOKEN or Config.API_TOKEN_OPTIONAL
+    loopback = Config.API_HOST.strip().lower() in {"localhost", "127.0.0.1", "::1"}
+    if unauthenticated and not loopback and not Config.API_ALLOW_UNAUTHENTICATED:
+        raise RuntimeError(
+            "Refusing to start unauthenticated API on a non-loopback bind host. "
+            "Set API_TOKEN and disable API_TOKEN_OPTIONAL, or explicitly set "
+            "API_ALLOW_UNAUTHENTICATED=true for development."
+        )
+
     Config.validate_provider()
     target_url = Config.provider_url()
     provider_name = Config.provider_name()

@@ -127,6 +127,7 @@ When running Python directly, set these in the shell or root `.env`. In Docker, 
 | `API_PORT` | `8000` | API listen port. |
 | `API_TOKEN` | _empty_ | Bearer token; an empty value disables token authentication. |
 | `API_TOKEN_OPTIONAL` | `false` | Allow unauthenticated requests even when a token is configured. |
+| `API_ALLOW_UNAUTHENTICATED` | `false` | Explicitly allow an unauthenticated API on a non-loopback bind host; unsafe for exposed services. |
 | `REMOTE_ATTACHMENT_ALLOW_HTTP` | `false` | Allow plain-HTTP remote attachment URLs. |
 | `REMOTE_ATTACHMENT_ALLOW_PRIVATE_NETS` | `false` | Allow remote attachments to resolve to private, loopback, link-local, or reserved networks. |
 | `REMOTE_ATTACHMENT_MAX_BYTES` | `10485760` | Maximum remote attachment download size in bytes. |

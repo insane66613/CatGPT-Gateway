@@ -44,7 +44,7 @@ if "playwright_stealth" not in sys.modules and importlib.util.find_spec("playwri
     playwright_stealth_mod.Stealth = _FakeStealth
     sys.modules["playwright_stealth"] = playwright_stealth_mod
 
-from src.api.server import BearerTokenMiddleware
+from src.api.server import BearerTokenMiddleware, app, lifespan
 from src.config import Config
 
 
@@ -171,6 +171,49 @@ class BearerTokenMiddlewareTests(unittest.TestCase):
             )
         finally:
             Config.API_CORS_ORIGINS = original
+
+    def test_public_bind_without_token_fails_closed(self) -> None:
+        original_host = Config.API_HOST
+        original_allow = Config.API_ALLOW_UNAUTHENTICATED
+        original_token = Config.API_TOKEN
+        original_optional = Config.API_TOKEN_OPTIONAL
+        Config.API_TOKEN = ""
+        Config.API_TOKEN_OPTIONAL = False
+        Config.API_HOST = "0.0.0.0"
+        Config.API_ALLOW_UNAUTHENTICATED = False
+
+        async def enter_lifespan() -> None:
+            async with lifespan(app):
+                self.fail("lifespan should reject an unauthenticated public bind")
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Refusing to start unauthenticated API"):
+                asyncio.run(enter_lifespan())
+        finally:
+            Config.API_HOST = original_host
+            Config.API_ALLOW_UNAUTHENTICATED = original_allow
+            Config.API_TOKEN = original_token
+            Config.API_TOKEN_OPTIONAL = original_optional
+
+
+    def test_optional_token_does_not_expose_lan(self) -> None:
+        original = (Config.API_HOST, Config.API_ALLOW_UNAUTHENTICATED,
+                    Config.API_TOKEN, Config.API_TOKEN_OPTIONAL)
+        Config.API_HOST = "192.168.1.5"
+        Config.API_ALLOW_UNAUTHENTICATED = False
+        Config.API_TOKEN = "test-token"
+        Config.API_TOKEN_OPTIONAL = True
+
+        async def enter_lifespan() -> None:
+            async with lifespan(app):
+                self.fail("optional token must not expose LAN listener")
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Refusing to start unauthenticated API"):
+                asyncio.run(enter_lifespan())
+        finally:
+            (Config.API_HOST, Config.API_ALLOW_UNAUTHENTICATED,
+             Config.API_TOKEN, Config.API_TOKEN_OPTIONAL) = original
 
 
 if __name__ == "__main__":

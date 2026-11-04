@@ -86,8 +86,8 @@ ENV BROWSER_DATA_DIR=/app/browser_data
 ENV LOG_DIR=/app/logs
 ENV API_HOST=0.0.0.0
 ENV API_PORT=8000
-ENV LOG_LEVEL=DEBUG
-ENV VERBOSE=true
+ENV LOG_LEVEL=INFO
+ENV VERBOSE=false
 ENV PYTHONPATH=/app
 ENV DISPLAY_WIDTH=1366
 ENV DISPLAY_HEIGHT=768
@@ -100,4 +100,4 @@ EXPOSE 8000 5800 5900
 
 # ── Health check ────────────────────────────────────────────────
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/healthz || curl -f http://localhost:8000/v1/models || exit 1
+    CMD curl -f http://localhost:8000/healthz || exit 1

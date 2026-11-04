@@ -242,6 +242,9 @@ class MiniMaxProviderTests(unittest.TestCase):
                     patch.object(server.Config, "MINIMAX_API_KEY", "test-key")
                 )
                 stack.enter_context(
+                    patch.object(server.Config, "API_TOKEN", "test-token")
+                )
+                stack.enter_context(
                     patch.object(server, "MiniMaxClient", return_value=fake_client)
                 )
                 stack.enter_context(

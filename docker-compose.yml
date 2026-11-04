@@ -19,9 +19,9 @@ services:
     networks:
       - app_services
     ports:
-      - "8650:8000" # API Port
-      - "${MIMICGATE_VNC_PORT:-${CATGPT_VNC_PORT:-${VNC_PORT:-5800}}}:5800" # jlesage Web GUI (HTTP, or HTTPS with SECURE_CONNECTION=1)
-      # - "5900:5900" # Direct VNC port (optional)
+      - "127.0.0.1:8650:8000" # API Port
+      - "127.0.0.1:${MIMICGATE_VNC_PORT:-${CATGPT_VNC_PORT:-${VNC_PORT:-5800}}}:5800" # jlesage Web GUI
+      # - "127.0.0.1:5900:5900" # Direct VNC port (optional)
     tmpfs:
       - /tmp:exec,mode=1777
       - /app/browser_data/Default/Cache:mode=1777
@@ -68,8 +68,8 @@ services:
       # API
       API_HOST: "0.0.0.0"
       API_PORT: 8000
-      API_TOKEN: ${MIMICGATE_API_KEY:-${CATGPT_API_KEY:-dummy123}}
-      API_TOKEN_OPTIONAL: "true"
+      API_TOKEN: ${MIMICGATE_API_KEY:-${CATGPT_API_KEY:?Set MIMICGATE_API_KEY or CATGPT_API_KEY to a strong bearer token}}
+      API_TOKEN_OPTIONAL: "false"
       # Optional: keep large system instructions in thread context and send compact reminders
       API_THREAD_CONTRACT_MODE: "true"
       API_THREAD_CONTRACT_TTL_SECONDS: 3600
@@ -84,12 +84,12 @@ services:
       API_CONVERSATION_RETENTION_SECONDS: ${API_CONVERSATION_RETENTION_SECONDS:-2592000}
       API_CONVERSATION_MAX_ROUTES: ${API_CONVERSATION_MAX_ROUTES:-10000}
       # VNC Authentication & Web GUI URL
-      VNC_PASSWORD: ${MIMICGATE_VNC_PASSWORD:-${CATGPT_VNC_PASSWORD:-mimicgate}}
+      VNC_PASSWORD: ${MIMICGATE_VNC_PASSWORD:-${CATGPT_VNC_PASSWORD:?Set MIMICGATE_VNC_PASSWORD or CATGPT_VNC_PASSWORD to a non-default VNC password}}
       VNC_PORT: ${MIMICGATE_VNC_PORT:-${CATGPT_VNC_PORT:-${VNC_PORT:-5800}}}
       VNC_URL: ${MIMICGATE_VNC_URL:-${CATGPT_VNC_URL:-${VNC_URL:-}}}
       # Logging (verbose for Docker)
-      LOG_LEVEL: "DEBUG"
-      VERBOSE: "true"
+      LOG_LEVEL: "INFO"
+      VERBOSE: "false"
     volumes:
       - ${DOCKERDIR:-.}/appdata/mimicgate/config:/config
       - ${DOCKERDIR:-.}/appdata/mimicgate/browser:/app/browser_data
