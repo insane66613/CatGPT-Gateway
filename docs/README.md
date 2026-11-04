@@ -20,6 +20,7 @@ Welcome to the MimicGate Gateway documentation. This directory contains detailed
 | [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) | Architecture | Gateway internals, browser tab pooling, session lifecycle, conversation isolation, persistence, and response detection. |
 | [BROWSER_AUTOMATION_RUNBOOK.md](BROWSER_AUTOMATION_RUNBOOK.md) | Operations | Patchright/Chromium troubleshooting, CDP remote debugging, lock file cleanup, and browser recovery procedures. |
 | [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) | Quality & Testing | Unit test suite execution, integration checks, environment verification, and live browser smoke test scripts. |
+| [CONSOLIDATION_v9.1.0-20261103.md](CONSOLIDATION_v9.1.0-20261103.md) | Release notes | Selective local security-policy consolidation onto upstream v9.1.0, provenance, preserved PRs, and runtime caveats. |
 
 ---
 
